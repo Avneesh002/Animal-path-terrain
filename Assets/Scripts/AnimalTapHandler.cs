@@ -13,6 +13,10 @@ public sealed class AnimalTapHandler : MonoBehaviour
     private Camera sceneCamera;
     private Animator journeyAnimator;
     private float savedAnimatorSpeed;
+    private bool savedAnimatorEnabled;
+    private int savedStateHash;
+    private float savedStateTime;
+    private UnityKit.FlutterBridge flutterBridge;
     private bool hasSavedView;
     private bool isReturning;
     private bool isMoving;
@@ -26,6 +30,7 @@ public sealed class AnimalTapHandler : MonoBehaviour
     private float moveElapsed;
 
     public bool HasSavedView => hasSavedView;
+    public bool IsFocusedOn(AnimalTapTarget target) => hasSavedView && selectedAnimal == target;
     public bool IsAnimalFocused => hasSavedView && !isReturning;
 
     // Install on the scene camera at runtime so no scene-object wiring is required.
@@ -50,8 +55,23 @@ public sealed class AnimalTapHandler : MonoBehaviour
             sceneCamera = Camera.main;
     }
 
+    private void OnEnable()
+    {
+        flutterBridge = UnityKit.FlutterBridge.Instance;
+        if (flutterBridge != null)
+            flutterBridge.OnTypedMessage += HandleFlutterMessage;
+    }
+
+    private void HandleFlutterMessage(string type, string json)
+    {
+        if (type == "RestoreJourneyView")
+            RestoreJourneyView();
+    }
+
     private void Update()
     {
+        // A world tap must not interrupt the close-up's return movement.
+        if (isReturning) return;
         if (!ForestPointerInput.TryGetPress(out Vector2 screenPosition) || sceneCamera == null)
             return;
 
@@ -72,9 +92,13 @@ public sealed class AnimalTapHandler : MonoBehaviour
     /// <summary>Save the journey view once, then move only the camera to the animal.</summary>
     public void SelectAnimal(AnimalTapTarget target)
     {
-        if (target == null || sceneCamera == null ||
+        if (target == null || sceneCamera == null || isReturning ||
             (selectedAnimal == target && hasSavedView && !isReturning))
             return;
+
+        // Animal selection is available only when the journey has settled at a stop.
+        var navigation = sceneCamera.GetComponent<ForestReturnToGate>();
+        if (!hasSavedView && navigation != null && !navigation.CanFocusAnimal) return;
 
         Vector3 closeUpPosition = target.CloseUpPosition;
         Vector3 lookDirection = target.FocusPoint.position - closeUpPosition;
@@ -95,9 +119,16 @@ public sealed class AnimalTapHandler : MonoBehaviour
             if (journeyAnimator != null)
             {
                 savedAnimatorSpeed = journeyAnimator.speed;
-                journeyAnimator.speed = 0f;
+                savedAnimatorEnabled = journeyAnimator.enabled;
+                var state = journeyAnimator.GetCurrentAnimatorStateInfo(0);
+                savedStateHash = state.fullPathHash;
+                savedStateTime = state.normalizedTime;
+                journeyAnimator.enabled = false;
             }
         }
+
+        if (selectedAnimal != null && selectedAnimal != target)
+            selectedAnimal.SetZoomed(false);
 
         selectedAnimal = target;
         isReturning = false;
@@ -114,6 +145,9 @@ public sealed class AnimalTapHandler : MonoBehaviour
             return;
 
         isReturning = true;
+        if (selectedAnimal != null)
+            selectedAnimal.SetZoomed(false);
+
         BeginMove(savedPosition, savedRotation);
         if (selectedAnimal != null)
             AnimalFlutterEvents.Send("animalClosed", selectedAnimal.AnimalId);
@@ -150,9 +184,12 @@ public sealed class AnimalTapHandler : MonoBehaviour
                 return;
 
             isMoving = false;
-            // Tell Flutter only after the close-up reaches its destination.
+            // Start the animal's focus animation only after the camera close-up settles.
             if (!isReturning && selectedAnimal != null)
+            {
+                selectedAnimal.SetZoomed(true);
                 AnimalFlutterEvents.Send("animalFocusReady", selectedAnimal.AnimalId);
+            }
         }
 
         sceneCamera.transform.SetPositionAndRotation(destinationPosition, destinationRotation);
@@ -163,16 +200,33 @@ public sealed class AnimalTapHandler : MonoBehaviour
     private void ReleaseSavedView()
     {
         if (journeyAnimator != null)
-            journeyAnimator.speed = savedAnimatorSpeed;
+        {
+            journeyAnimator.enabled = savedAnimatorEnabled;
+            journeyAnimator.speed = savedAnimatorSpeed > 0f ? savedAnimatorSpeed : 1f;
+            if (savedAnimatorEnabled)
+            {
+                journeyAnimator.Play(savedStateHash, 0, savedStateTime);
+                journeyAnimator.Update(0f);
+            }
+            sceneCamera.transform.SetPositionAndRotation(savedPosition, savedRotation);
+        }
 
+        string animalId = selectedAnimal != null ? selectedAnimal.AnimalId : null;
         hasSavedView = false;
         isReturning = false;
         isMoving = false;
         selectedAnimal = null;
+        if (!string.IsNullOrEmpty(animalId))
+            AnimalFlutterEvents.Send("animalReturnComplete", animalId);
     }
 
     private void OnDisable()
     {
+        if (flutterBridge != null)
+            flutterBridge.OnTypedMessage -= HandleFlutterMessage;
+        flutterBridge = null;
+        if (selectedAnimal != null)
+            selectedAnimal.SetZoomed(false);
         if (!hasSavedView)
             return;
 
@@ -180,5 +234,4 @@ public sealed class AnimalTapHandler : MonoBehaviour
             sceneCamera.transform.SetPositionAndRotation(savedPosition, savedRotation);
         ReleaseSavedView();
     }
-
 }

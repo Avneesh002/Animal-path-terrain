@@ -1,7 +1,7 @@
 using System.Collections;
 using UnityEngine;
 
-/// <summary>Click anywhere on the forest entrance gate to swing its leaf open or closed.</summary>
+/// <summary>Click the forest entrance gate to open it once and begin the journey.</summary>
 public sealed class ForestGateClickOpener : MonoBehaviour
 {
     [SerializeField, Min(0.1f)] private float openAngle = 100f;
@@ -20,12 +20,16 @@ public sealed class ForestGateClickOpener : MonoBehaviour
 
     public void SetJourneyReturning(bool value) => journeyReturning = value;
 
-    public void ResetAfterReturn()
+    public IEnumerator CloseAndResetAfterReturn()
     {
         if (movement != null) StopCoroutine(movement);
         movement = null;
         isOpen = false;
-        gateHinge.localRotation = closedRotation;
+        if (gateHighlight != null) gateHighlight.SetActive(false);
+
+        // Keep gate input locked until the player has seen the gate close.
+        yield return RotateHinge(closedRotation);
+
         if (gateHighlight != null) gateHighlight.SetActive(true);
         cameraTravelStarted = false;
         journeyReturning = false;
@@ -48,7 +52,10 @@ public sealed class ForestGateClickOpener : MonoBehaviour
 
     private void Update()
     {
-        if (journeyReturning || !ForestPointerInput.TryGetPress(out Vector2 pointerPosition))
+        // Keep extra taps from reversing the leaf while it is moving or after
+        // the camera journey has started.
+        if (journeyReturning || movement != null || cameraTravelStarted ||
+            !ForestPointerInput.TryGetPress(out Vector2 pointerPosition))
         {
             return;
         }
@@ -75,18 +82,14 @@ public sealed class ForestGateClickOpener : MonoBehaviour
 
     private void ToggleGate()
     {
-        isOpen = !isOpen;
+        if (isOpen || journeyReturning || movement != null || cameraTravelStarted) return;
 
-        // Stop the spotlight when opening so it does not sweep across the scene.
-        // Restore it if the gate is closed again.
+        isOpen = true;
+
+        // Clicks only open the gate; the journey-return flow handles resetting it.
         if (gateHighlight != null)
-            gateHighlight.SetActive(!isOpen);
-        if (movement != null)
-            StopCoroutine(movement);
-
-        Quaternion target = isOpen
-            ? closedRotation * Quaternion.Euler(0f, openAngle, 0f)
-            : closedRotation;
+            gateHighlight.SetActive(false);
+        Quaternion target = closedRotation * Quaternion.Euler(0f, openAngle, 0f);
         movement = StartCoroutine(RotateHinge(target));
     }
 
@@ -111,7 +114,9 @@ public sealed class ForestGateClickOpener : MonoBehaviour
             {
                 cameraTravelStarted = true;
                 cameraTravelAnimator.enabled = true;
+                cameraTravelAnimator.speed = 1f;
                 cameraTravelAnimator.Play("CameraTravel", 0, 0f);
+                cameraTravelAnimator.Update(0f);
             }
         }
 }

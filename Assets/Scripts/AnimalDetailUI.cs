@@ -20,9 +20,16 @@ public sealed class AnimalDetailUI : MonoBehaviour
             return;
         }
 
-        backButton.onClick.AddListener(ReturnToJourney);
         backButton.gameObject.SetActive(false);
         ApplySafeArea();
+    }
+
+    private void OnEnable()
+    {
+        if (backButton == null) return;
+        // Reconnect after script reloads and UI reactivation without duplicate callbacks.
+        backButton.onClick.RemoveListener(ReturnToJourney);
+        backButton.onClick.AddListener(ReturnToJourney);
     }
 
     private void Update()
@@ -71,7 +78,10 @@ public sealed class AnimalDetailUI : MonoBehaviour
     private void OnDisable()
     {
         if (backButton != null)
+        {
+            backButton.onClick.RemoveListener(ReturnToJourney);
             backButton.gameObject.SetActive(false);
+        }
     }
 
     private void OnDestroy()
