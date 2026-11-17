@@ -62,10 +62,34 @@ public sealed class AnimalTapHandler : MonoBehaviour
             flutterBridge.OnTypedMessage += HandleFlutterMessage;
     }
 
+    [System.Serializable] private class AnimalSelectionData { public string animalId; }
+    [System.Serializable] private class AnimalSelectionMessage { public AnimalSelectionData data; }
+
     private void HandleFlutterMessage(string type, string json)
     {
         if (type == "RestoreJourneyView")
             RestoreJourneyView();
+        else if (type == "SelectAnimalById")
+        {
+            var request = JsonUtility.FromJson<AnimalSelectionMessage>(json);
+            var id = request != null && request.data != null ? request.data.animalId : null;
+            var navigation = sceneCamera != null ? sceneCamera.GetComponent<ForestReturnToGate>() : null;
+            if (string.IsNullOrWhiteSpace(id) || isReturning || (navigation != null && !navigation.CanFocusAnimal))
+            {
+                AnimalFlutterEvents.Send("animalSelectionUnavailable", id ?? "");
+                return;
+            }
+            foreach (var target in FindObjectsOfType<AnimalTapTarget>())
+            {
+                if (string.Equals(target.AnimalId, id, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    SelectAnimal(target);
+                    if (selectedAnimal != target) AnimalFlutterEvents.Send("animalSelectionUnavailable", id);
+                    return;
+                }
+            }
+            AnimalFlutterEvents.Send("animalSelectionUnavailable", id);
+        }
     }
 
     private void Update()
